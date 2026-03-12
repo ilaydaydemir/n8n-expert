@@ -10,43 +10,54 @@ interface WorkflowPreviewProps {
 }
 
 export default function WorkflowPreview({ workflow }: WorkflowPreviewProps) {
-  const [deploying, setDeploying] = useState(false);
-  const [deployed, setDeployed] = useState<{ id: string; active: boolean } | null>(null);
+  const isUpdate = !!workflow.id;
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState<{ id: string; active: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activating, setActivating] = useState(false);
 
-  async function deploy() {
-    setDeploying(true);
+  async function save() {
+    setSaving(true);
     setError(null);
     try {
-      const res = await fetch("/api/n8n/workflows", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workflow }),
-      });
+      let res: Response;
+      if (isUpdate) {
+        res = await fetch(`/api/n8n/workflows/${workflow.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ workflow }),
+        });
+      } else {
+        res = await fetch("/api/n8n/workflows", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ workflow }),
+        });
+      }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setDeployed({ id: data.workflow.id, active: data.workflow.active });
+      setSaved({ id: data.workflow.id, active: data.workflow.active });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Deploy failed");
+      setError(e instanceof Error ? e.message : "Failed");
     } finally {
-      setDeploying(false);
+      setSaving(false);
     }
   }
 
   async function activate() {
-    if (!deployed) return;
+    const id = saved?.id || workflow.id;
+    if (!id) return;
     setActivating(true);
     setError(null);
     try {
-      const res = await fetch(`/api/n8n/workflows/${deployed.id}`, {
+      const res = await fetch(`/api/n8n/workflows/${id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "activate" }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setDeployed({ id: deployed.id, active: true });
+      setSaved({ id, active: true });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Activation failed");
     } finally {
@@ -54,25 +65,38 @@ export default function WorkflowPreview({ workflow }: WorkflowPreviewProps) {
     }
   }
 
+  const isDone = saved !== null;
+  const isActive = saved?.active;
+  const buttonLabel = isUpdate ? "Apply Changes" : "Deploy to n8n";
+  const doneLabel = isUpdate ? "Updated" : "Deployed";
+
   return (
     <div className="mt-3 border border-orange-200 rounded-xl overflow-hidden bg-orange-50/50">
       <div className="flex items-center justify-between px-4 py-2 bg-orange-100/80 border-b border-orange-200">
         <div className="flex items-center gap-2">
-          <span className="text-orange-600 text-sm font-semibold">⚡ Workflow</span>
+          <span className="text-orange-600 text-sm font-semibold">
+            {isUpdate ? "✏️ Edit" : "⚡ Workflow"}
+          </span>
           <span className="text-orange-800 text-sm font-medium truncate max-w-[200px]">
             {workflow.name}
           </span>
           <Badge variant="secondary" className="text-xs">
             {workflow.nodes.length} nodes
           </Badge>
+          {isUpdate && (
+            <Badge className="text-xs bg-blue-100 text-blue-700 border-blue-200">
+              update
+            </Badge>
+          )}
         </div>
+
         <div className="flex items-center gap-2">
-          {deployed ? (
+          {isDone ? (
             <>
               <Badge className="bg-green-100 text-green-700 border-green-200 text-xs">
-                ✓ Deployed {deployed.id.slice(0, 6)}
+                ✓ {doneLabel}
               </Badge>
-              {!deployed.active && (
+              {!isActive && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -83,7 +107,7 @@ export default function WorkflowPreview({ workflow }: WorkflowPreviewProps) {
                   {activating ? "Activating..." : "Activate"}
                 </Button>
               )}
-              {deployed.active && (
+              {isActive && (
                 <Badge className="bg-green-100 text-green-700 border-green-200 text-xs">
                   ● Active
                 </Badge>
@@ -93,10 +117,10 @@ export default function WorkflowPreview({ workflow }: WorkflowPreviewProps) {
             <Button
               size="sm"
               className="h-7 text-xs bg-orange-500 hover:bg-orange-600 text-white"
-              onClick={deploy}
-              disabled={deploying}
+              onClick={save}
+              disabled={saving}
             >
-              {deploying ? "Deploying..." : "Deploy to n8n"}
+              {saving ? (isUpdate ? "Applying..." : "Deploying...") : buttonLabel}
             </Button>
           )}
         </div>
@@ -110,22 +134,19 @@ export default function WorkflowPreview({ workflow }: WorkflowPreviewProps) {
 
       <div className="p-4">
         <div className="flex flex-wrap gap-2 mb-3">
-          {workflow.nodes.map((node) => {
-            const isFirst = workflow.nodes[0].name === node.name;
-            return (
-              <div
-                key={node.id}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border ${
-                  isFirst
-                    ? "bg-orange-100 border-orange-300 text-orange-800"
-                    : "bg-white border-gray-200 text-gray-700"
-                }`}
-              >
-                <span>{getNodeIcon(node.type)}</span>
-                <span>{node.name}</span>
-              </div>
-            );
-          })}
+          {workflow.nodes.map((node, i) => (
+            <div
+              key={node.id}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border ${
+                i === 0
+                  ? "bg-orange-100 border-orange-300 text-orange-800"
+                  : "bg-white border-gray-200 text-gray-700"
+              }`}
+            >
+              <span>{getNodeIcon(node.type)}</span>
+              <span>{node.name}</span>
+            </div>
+          ))}
         </div>
 
         <details className="group">

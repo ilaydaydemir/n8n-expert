@@ -53,6 +53,37 @@ export async function listWorkflows(): Promise<N8nWorkflowResponse[]> {
   return data.data || [];
 }
 
+export async function getWorkflow(id: string): Promise<N8nWorkflowResponse> {
+  const response = await fetch(`${N8N_BASE_URL}/api/v1/workflows/${id}`, {
+    headers,
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to fetch workflow: ${error}`);
+  }
+
+  return response.json();
+}
+
+export async function updateWorkflow(
+  id: string,
+  workflow: N8nWorkflow
+): Promise<N8nWorkflowResponse> {
+  const response = await fetch(`${N8N_BASE_URL}/api/v1/workflows/${id}`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify(workflow),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Failed to update workflow: ${error}`);
+  }
+
+  return response.json();
+}
+
 export async function deleteWorkflow(id: string): Promise<void> {
   const response = await fetch(`${N8N_BASE_URL}/api/v1/workflows/${id}`, {
     method: "DELETE",

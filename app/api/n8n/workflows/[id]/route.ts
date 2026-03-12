@@ -1,5 +1,38 @@
-import { activateWorkflow, deleteWorkflow } from "@/lib/n8n-client";
+import { activateWorkflow, deleteWorkflow, getWorkflow, updateWorkflow } from "@/lib/n8n-client";
 import { NextResponse } from "next/server";
+
+export async function GET(
+  _req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const workflow = await getWorkflow(id);
+    return NextResponse.json({ workflow });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Fetch failed" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PUT(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const { workflow } = await req.json();
+    const updated = await updateWorkflow(id, workflow);
+    return NextResponse.json({ workflow: updated });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Update failed" },
+      { status: 500 }
+    );
+  }
+}
 
 export async function POST(
   req: Request,

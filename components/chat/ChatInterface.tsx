@@ -31,7 +31,7 @@ export default function ChatInterface() {
       id: "welcome",
       role: "assistant",
       content:
-        "Hey! I'm your **n8n Expert**. I can help you design and build any automation workflow — from simple webhooks to complex multi-step pipelines.\n\nTell me what you want to automate, and I'll design the workflow and deploy it directly to your n8n instance. What would you like to build?",
+        "Hey! I'm your **n8n Expert**. I can help you design and build any automation workflow — from simple webhooks to complex multi-step pipelines.\n\nTell me what you want to automate, and I'll design the workflow and deploy it directly to your n8n instance. To edit an existing workflow, open the sidebar and click **Edit** on it.\n\nWhat would you like to build?",
       timestamp: new Date(),
     },
   ]);
@@ -39,6 +39,8 @@ export default function ChatInterface() {
   const [loading, setLoading] = useState(false);
   const [n8nWorkflows, setN8nWorkflows] = useState<N8nWorkflowResponse[]>([]);
   const [showSidebar, setShowSidebar] = useState(false);
+  const [editingWorkflow, setEditingWorkflow] = useState<N8nWorkflowResponse | null>(null);
+  const [loadingWorkflowId, setLoadingWorkflowId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -60,6 +62,45 @@ export default function ChatInterface() {
     }
   }
 
+  async function startEditing(wf: N8nWorkflowResponse) {
+    setLoadingWorkflowId(wf.id);
+    try {
+      const res = await fetch(`/api/n8n/workflows/${wf.id}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      const full: N8nWorkflowResponse = data.workflow;
+      setEditingWorkflow(full);
+      setShowSidebar(false);
+
+      // Inject a system-style message into chat showing the workflow being edited
+      const contextMsg: Message = {
+        id: `edit-context-${wf.id}`,
+        role: "assistant",
+        content: `I've loaded **"${full.name}"** for editing. It has ${full.nodes.length} node${full.nodes.length !== 1 ? "s" : ""}:\n${full.nodes.map((n) => `- **${n.name}** (\`${n.type}\`)`).join("\n")}\n\nWhat would you like to change?`,
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, contextMsg]);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to load workflow");
+    } finally {
+      setLoadingWorkflowId(null);
+    }
+  }
+
+  function stopEditing() {
+    setEditingWorkflow(null);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `edit-done-${Date.now()}`,
+        role: "assistant",
+        content: "Done editing. What would you like to build next?",
+        timestamp: new Date(),
+      },
+    ]);
+  }
+
   async function sendMessage(text?: string) {
     const content = text || input.trim();
     if (!content || loading) return;
@@ -75,10 +116,23 @@ export default function ChatInterface() {
     setInput("");
     setLoading(true);
 
+    // Build history — inject current workflow JSON as system context when editing
     const history = [...messages, userMsg].map((m) => ({
       role: m.role,
       content: m.content,
     }));
+
+    if (editingWorkflow) {
+      // Prepend a hidden system-level user message with the full workflow JSON
+      history.unshift({
+        role: "user",
+        content: `[CONTEXT — do not repeat this to the user] I am editing an existing workflow. Here is its current full JSON. Preserve all node IDs, names, and connections that the user doesn't ask to change. Always include the workflow "id" field in your output so it gets updated rather than recreated.\n\n\`\`\`json\n${JSON.stringify(editingWorkflow, null, 2)}\n\`\`\``,
+      });
+      history.unshift({
+        role: "assistant",
+        content: "Understood. I have the workflow JSON loaded. I will make only the changes you request and preserve everything else.",
+      });
+    }
 
     const assistantId = (Date.now() + 1).toString();
     setMessages((prev) => [
@@ -112,9 +166,7 @@ export default function ChatInterface() {
                 fullContent += data.content;
                 setMessages((prev) =>
                   prev.map((m) =>
-                    m.id === assistantId
-                      ? { ...m, content: fullContent }
-                      : m
+                    m.id === assistantId ? { ...m, content: fullContent } : m
                   )
                 );
               }
@@ -128,12 +180,16 @@ export default function ChatInterface() {
       const workflow = extractWorkflow(fullContent);
       if (workflow) {
         setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId ? { ...m, workflow } : m
-          )
+          prev.map((m) => (m.id === assistantId ? { ...m, workflow } : m))
         );
+        // If the returned workflow has an id, update our editingWorkflow reference
+        if (workflow.id && editingWorkflow && workflow.id === editingWorkflow.id) {
+          setEditingWorkflow((prev) =>
+            prev ? { ...prev, ...workflow, id: prev.id } : prev
+          );
+        }
       }
-    } catch (e) {
+    } catch {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantId
@@ -163,7 +219,7 @@ export default function ChatInterface() {
       >
         <div className="p-4 border-b border-gray-100">
           <h2 className="font-semibold text-gray-800 text-sm">n8n Workflows</h2>
-          <p className="text-xs text-gray-500 mt-0.5">Deployed to your instance</p>
+          <p className="text-xs text-gray-500 mt-0.5">Click Edit to modify one</p>
         </div>
         <ScrollArea className="flex-1 p-3">
           {n8nWorkflows.length === 0 ? (
@@ -175,12 +231,18 @@ export default function ChatInterface() {
               {n8nWorkflows.map((wf) => (
                 <div
                   key={wf.id}
-                  className="p-3 rounded-lg border border-gray-100 hover:border-orange-200 hover:bg-orange-50/50 transition-colors"
+                  className={`p-3 rounded-lg border transition-colors ${
+                    editingWorkflow?.id === wf.id
+                      ? "border-orange-300 bg-orange-50"
+                      : "border-gray-100 hover:border-orange-200 hover:bg-orange-50/50"
+                  }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-gray-700 truncate">{wf.name}</span>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-medium text-gray-700 truncate max-w-[120px]">
+                      {wf.name}
+                    </span>
                     <Badge
-                      className={`text-xs ml-2 shrink-0 ${
+                      className={`text-xs ml-1 shrink-0 ${
                         wf.active
                           ? "bg-green-100 text-green-700 border-green-200"
                           : "bg-gray-100 text-gray-500 border-gray-200"
@@ -189,21 +251,32 @@ export default function ChatInterface() {
                       {wf.active ? "Active" : "Inactive"}
                     </Badge>
                   </div>
-                  <p className="text-xs text-gray-400 mt-1">
-                    {wf.nodes?.length ?? 0} nodes · Updated {new Date(wf.updatedAt).toLocaleDateString()}
+                  <p className="text-xs text-gray-400 mb-2">
+                    {wf.nodes?.length ?? 0} nodes · {new Date(wf.updatedAt).toLocaleDateString()}
                   </p>
+                  {editingWorkflow?.id === wf.id ? (
+                    <button
+                      onClick={stopEditing}
+                      className="w-full text-xs py-1 rounded-md bg-orange-100 text-orange-700 hover:bg-orange-200 transition-colors font-medium"
+                    >
+                      Stop Editing
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => startEditing(wf)}
+                      disabled={loadingWorkflowId === wf.id}
+                      className="w-full text-xs py-1 rounded-md border border-gray-200 text-gray-600 hover:border-orange-300 hover:text-orange-700 hover:bg-orange-50 transition-colors disabled:opacity-50"
+                    >
+                      {loadingWorkflowId === wf.id ? "Loading..." : "Edit"}
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
           )}
         </ScrollArea>
         <div className="p-3 border-t border-gray-100">
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full text-xs"
-            onClick={loadWorkflows}
-          >
+          <Button variant="outline" size="sm" className="w-full text-xs" onClick={loadWorkflows}>
             Refresh
           </Button>
         </div>
@@ -240,6 +313,27 @@ export default function ChatInterface() {
             <span className="text-xs text-gray-500">Connected</span>
           </div>
         </div>
+
+        {/* Edit mode banner */}
+        {editingWorkflow && (
+          <div className="bg-blue-50 border-b border-blue-200 px-4 py-2 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-blue-600 text-xs">✏️</span>
+              <span className="text-xs text-blue-700 font-medium">
+                Editing: <strong>{editingWorkflow.name}</strong>
+              </span>
+              <span className="text-xs text-blue-500">
+                — only your requested changes will be applied
+              </span>
+            </div>
+            <button
+              onClick={stopEditing}
+              className="text-xs text-blue-500 hover:text-blue-700 transition-colors"
+            >
+              Exit edit mode
+            </button>
+          </div>
+        )}
 
         {/* Messages */}
         <ScrollArea className="flex-1 px-4 py-4">
@@ -286,13 +380,23 @@ export default function ChatInterface() {
         {/* Input */}
         <div className="bg-white border-t border-gray-200 p-4">
           <div className="max-w-3xl mx-auto">
-            <div className="flex items-end gap-3 bg-gray-50 border border-gray-200 rounded-2xl px-4 py-3 focus-within:border-orange-300 focus-within:ring-1 focus-within:ring-orange-200 transition-all">
+            <div
+              className={`flex items-end gap-3 border rounded-2xl px-4 py-3 transition-all ${
+                editingWorkflow
+                  ? "bg-blue-50/50 border-blue-200 focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-200"
+                  : "bg-gray-50 border-gray-200 focus-within:border-orange-300 focus-within:ring-1 focus-within:ring-orange-200"
+              }`}
+            >
               <Textarea
                 ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Describe the workflow you want to build..."
+                placeholder={
+                  editingWorkflow
+                    ? `What would you like to change in "${editingWorkflow.name}"?`
+                    : "Describe the workflow you want to build..."
+                }
                 className="flex-1 border-0 bg-transparent resize-none text-sm focus-visible:ring-0 min-h-[20px] max-h-32 p-0"
                 rows={1}
               />
@@ -300,7 +404,11 @@ export default function ChatInterface() {
                 onClick={() => sendMessage()}
                 disabled={!input.trim() || loading}
                 size="sm"
-                className="bg-orange-500 hover:bg-orange-600 text-white rounded-xl px-4 shrink-0"
+                className={`rounded-xl px-4 shrink-0 text-white ${
+                  editingWorkflow
+                    ? "bg-blue-500 hover:bg-blue-600"
+                    : "bg-orange-500 hover:bg-orange-600"
+                }`}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <line x1="22" y1="2" x2="11" y2="13" />

@@ -7,6 +7,7 @@ export interface Message {
 }
 
 export interface N8nWorkflow {
+  id?: string;
   name: string;
   nodes: N8nNode[];
   connections: N8nConnections;
